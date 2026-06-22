@@ -13,15 +13,15 @@ JobLens 是一个**零构建、双击即用**的纯前端求职工具，配一�
 
 | 岗位上传和解析 | 多维度岗位排序 |
 | :---: | :---: |
-| ![编辑页](screenshots/01-editor.jpg) | ![结构化对比](screenshots/02-decompose.jpg) |
+| <img src="screenshots/01-editor.jpg" alt="岗位上传和解析" height="240"> | <img src="screenshots/02-decompose.jpg" alt="多维度岗位排序" height="240"> |
 
 | 岗位结构化整理 | 岗位多维度拆解 |
 | :---: | :---: |
-| ![岗位列表](screenshots/03-list.jpg) | ![统计](screenshots/04-stats.jpg) |
+| <img src="screenshots/03-list.jpg" alt="岗位结构化整理" height="240"> | <img src="screenshots/04-stats.jpg" alt="岗位多维度拆解" height="240"> |
 
 | 岗位分析 |
 | :---: |
-| ![上传](screenshots/05-upload.jpg) |
+| <img src="screenshots/05-upload.jpg" alt="岗位分析" height="240"> |
 
 ---
 
