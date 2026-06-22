@@ -1,0 +1,8 @@
+{
+  "BAIDU_API_KEY": "你的百度智能云_OCR_API_Key",
+  "BAIDU_SECRET_KEY": "你的百度智能云_OCR_Secret_Key",
+  "DEEPSEEK_API_KEY": "你的DeepSeek_API_Key",
+  "DEEPSEEK_MODEL": "deepseek-v4-flash",
+  "DEEPSEEK_API_URL": "https://api.deepseek.com/chat/completions",
+  "PORT": 8000
+}

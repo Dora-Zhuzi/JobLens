@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>求职小工具 · JD 拆解</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- OCR: Tesseract.js（中英文识别），离线无网时可在“创建岗位”里手动粘贴文本 -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">求职小工具 <span>JD 拆解 · MVP</span></div>
+    <nav class="nav-tabs">
+      <button id="tabEditor" class="nav-tab active">编辑</button>
+      <button id="tabAnalysis" class="nav-tab">岗位列表</button>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <!-- 左侧：岗位列表 -->
+    <aside class="col col-list">
+      <div class="col-head">
+        <span>岗位列表</span>
+        <span id="jobCount" class="count">0</span>
+      </div>
+      <ul id="jobList" class="job-list"></ul>
+      <p class="empty-hint" id="listEmptyHint">还没有岗位，点右侧「创建岗位」开始。</p>
+    </aside>
+
+    <!-- 中间：详情编辑 -->
+    <section class="col col-editor">
+      <div id="editorEmpty" class="editor-empty">
+        <div class="editor-empty-inner">
+          <div class="big">📋</div>
+          <p>从左侧选择一个岗位，或在右侧创建新岗位</p>
+        </div>
+      </div>
+      <div id="editor" class="editor" hidden>
+        <!-- 字段由 JS 渲染 -->
+      </div>
+    </section>
+
+    <!-- 右侧：操作区 -->
+    <aside class="col col-actions">
+      <div class="col-head"><span>操作</span></div>
+      <button id="createBtn" class="btn primary block">＋ 创建岗位</button>
+      <button id="batchBtn" class="btn block">⇪ 批量创建岗位</button>
+      <div class="actions-divider"></div>
+      <button id="saveBtn" class="btn success block" disabled>保存当前岗位</button>
+      <button id="deleteBtn" class="btn danger block" disabled>删除当前岗位</button>
+    </aside>
+  </main>
+
+  <!-- 岗位列表 / 分析视图 -->
+  <section id="analysisView" class="analysis" hidden>
+    <div class="analysis-toolbar">
+      <div class="at-left">
+        <label class="at-field">每页
+          <select id="pageSizeSelect">
+            <option value="10">10 条</option>
+            <option value="20">20 条</option>
+            <option value="50">50 条</option>
+          </select>
+        </label>
+      </div>
+      <div class="at-right">
+        <button id="analyzeBtn" class="btn primary" disabled>分析选中</button>
+        <button id="batchScoreBtn" class="btn">为未评分/已过期岗位打分</button>
+      </div>
+    </div>
+
+    <div class="analysis-table-wrap">
+      <table class="analysis-table">
+        <thead>
+          <tr id="analysisHead"></tr>
+        </thead>
+        <tbody id="analysisBody"></tbody>
+      </table>
+      <p id="analysisEmpty" class="empty-hint" hidden>还没有岗位，去「编辑」页创建吧。</p>
+    </div>
+
+    <div class="analysis-pager">
+      <button id="pagerPrev" class="btn mini">上一页</button>
+      <span id="pagerInfo" class="pager-info"></span>
+      <button id="pagerNext" class="btn mini">下一页</button>
+    </div>
+  </section>
+
+  <!-- 岗位要求统计弹窗 -->
+  <div id="statsModal" class="modal" hidden>
+    <div class="modal-card wide">
+      <h3>岗位要求统计 <span id="statsMeta" class="sub"></span></h3>
+      <div id="statsGrid" class="stats-grid"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close>关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 单个岗位创建弹窗 -->
+  <div id="createModal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>创建岗位</h3>
+      <label class="field">
+        <span>岗位名称（必填）</span>
+        <input id="createName" type="text" placeholder="例：前端工程师-字节跳动" />
+      </label>
+      <div class="field">
+        <span>上传 JD 截图（1~10 张）</span>
+        <div class="dropzone" id="createDrop">
+          <div class="dz-icon">🖼️</div>
+          <div class="dz-title">或拖放图片</div>
+          <div class="dz-sub">支持 PNG、JPG、JPEG 等图片格式</div>
+          <button type="button" class="btn dz-btn">⬆ 上传图片</button>
+          <input id="createImages" type="file" accept="image/*" multiple hidden />
+        </div>
+      </div>
+      <div id="createPreview" class="thumb-row"></div>
+      <div id="createStatus" class="status"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close>取消</button>
+        <button id="createConfirm" class="btn primary">识别并创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量整理弹窗 -->
+  <div id="batchModal" class="modal" hidden>
+    <div class="modal-card wide">
+      <div id="batchStep1">
+        <h3>批量创建岗位</h3>
+        <div class="field">
+          <span>一次上传多张 JD 截图，每张先生成一个「未知岗位」</span>
+          <div class="dropzone" id="batchDrop">
+            <div class="dz-icon">🖼️</div>
+            <div class="dz-title">或拖放图片</div>
+            <div class="dz-sub">可一次选择多张，支持 PNG、JPG、JPEG</div>
+            <button type="button" class="btn dz-btn">⬆ 上传图片</button>
+            <input id="batchImages" type="file" accept="image/*" multiple hidden />
+          </div>
+        </div>
+        <div id="batchPreview" class="thumb-row"></div>
+        <div id="batchStatus" class="status"></div>
+        <div class="modal-actions">
+          <button class="btn ghost" data-close>取消</button>
+          <button id="batchConfirm" class="btn primary">确认上传并识别</button>
+        </div>
+      </div>
+
+      <div id="batchStep2" hidden>
+        <h3>岗位整理</h3>
+        <p class="sub">把左侧图片拖到右侧岗位上重新归类；可重命名岗位。没有图片的岗位会在确认时自动删除。</p>
+        <div class="organize">
+          <div class="organize-col">
+            <div class="organize-head">图片</div>
+            <div id="imagePool" class="image-pool"></div>
+          </div>
+          <div class="organize-col">
+            <div class="organize-head">岗位</div>
+            <div id="jobPool" class="job-pool"></div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" data-close>取消</button>
+          <button id="organizeConfirm" class="btn primary">确认整理</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
