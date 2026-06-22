@@ -19,9 +19,8 @@ JobLens 是一个**零构建、双击即用**的纯前端求职工具，配一�
 | :---: | :---: |
 | <img src="screenshots/03-list.jpg" alt="岗位结构化整理" height="240"> | <img src="screenshots/04-stats.jpg" alt="岗位多维度拆解" height="240"> |
 
-| 岗位分析 |
-| :---: |
-| <img src="screenshots/05-upload.jpg" alt="岗位分析" height="240"> |
+<p align="center"><strong>岗位分析</strong></p>
+<p align="center"><img src="screenshots/05-upload.jpg" alt="岗位分析" height="240"></p>
 
 ---
 
