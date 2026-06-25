@@ -12,9 +12,9 @@
       placeholder: "图片 OCR 提取的原文…", def: "" },
     { key: "requirements",  label: "岗位要求拆解", type: "req" },
     { key: "match",         label: "个人匹配度分析", type: "match" },
-    { key: "interviewHave", label: "已有面试内容", type: "textarea", rows: 3,
+    { key: "interviewHave", label: "面试策略", type: "textarea", rows: 3,
       def: "xx公司xx项目内容可作为业务经验案例\nxx经历可作为xx核心能力例证" },
-    { key: "interviewNeed", label: "面试需补足内容", type: "textarea", rows: 2,
+    { key: "interviewNeed", label: "面试准备", type: "textarea", rows: 2,
       def: "花费一周时间掌握技能3" },
     { key: "prepDays",      label: "面试准备时间", type: "days", def: 7 },
   ];
@@ -285,13 +285,22 @@
         if (s.placeholder) field.placeholder = s.placeholder;
       } else {
         field = document.createElement("textarea");
-        field.rows = s.rows || 4;
+        field.rows = s.rows || 2;
+        autoGrow(field);   // 随内容自动撑高
       }
       field.value = job[s.key] || "";
       field.dataset.key = s.key;
       wrap.appendChild(field);
       editorEl.appendChild(wrap);
     });
+  }
+
+  // 文本域随内容自动增高（不出现滚动条、不固定高度）
+  function autoGrow(el) {
+    el.style.overflow = "hidden";
+    const fit = () => { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
+    el.addEventListener("input", fit);
+    requestAnimationFrame(fit);   // 入 DOM 后按初始内容撑高
   }
 
   // 枚举输入框：灰色占位提示（聚焦即消失，留空失焦再出现）
