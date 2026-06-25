@@ -162,67 +162,6 @@ function handleStructure(req, res) {
   });
 }
 
-const SCORE_PROMPT =
-  "你是求职匹配度评估助手。下面是求职者对自己在某个岗位 5 个维度上匹配情况的自我描述。\n" +
-  "请仅根据每个维度的描述文字本身，对该维度的匹配程度打一个 0–100 的整数分：\n" +
-  "描述越正面/越强（如 熟练、丰富、强、匹配、高）越接近 100；\n" +
-  "居中（如 了解、一般、中、部分匹配）给 40–70；\n" +
-  "越弱/越负面（如 无、弱、不匹配、低）越接近 0；该维度描述为空则给 0。\n" +
-  "严格只输出 JSON，键为 skill/business/core/trait/interest，值为整数，不要任何解释或代码块标记。\n" +
-  '示例：{"skill":80,"business":60,"core":70,"trait":50,"interest":90}\n\n描述：\n';
-
-// 从模型输出里稳健地提取 JSON 对象
-function extractJSON(s) {
-  if (!s) return null;
-  const m = s.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
-}
-
-function handleScore(req, res) {
-  if (!STRUCT_READY) {
-    return sendJSON(res, 503, { error: "服务器未配置 DEEPSEEK_API_KEY（打分功能需要）" });
-  }
-  let raw = "";
-  req.on("data", c => { raw += c; if (raw.length > 2 * 1024 * 1024) req.destroy(); });
-  req.on("end", async () => {
-    let dims;
-    try { dims = JSON.parse(raw).dims; } catch { return sendJSON(res, 400, { error: "请求体不是合法 JSON" }); }
-    if (!dims || typeof dims !== "object") return sendJSON(res, 400, { error: "缺少 dims（5 个维度的描述）" });
-    const desc =
-      `技能：${dims.skill || "（空）"}\n业务经验：${dims.business || "（空）"}\n` +
-      `核心能力：${dims.core || "（空）"}\n性格特质：${dims.trait || "（空）"}\n兴趣度：${dims.interest || "（空）"}`;
-    try {
-      const r = await fetch(DEEPSEEK_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-        body: JSON.stringify({
-          model: DEEPSEEK_MODEL,
-          temperature: 0,
-          messages: [{ role: "user", content: SCORE_PROMPT + desc }],
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) {
-        console.error("DeepSeek 返回错误:", data);
-        return sendJSON(res, 502, { error: (data.error && data.error.message) || "DeepSeek 调用失败" });
-      }
-      const out = data.choices?.[0]?.message?.content || "";
-      const parsed = extractJSON(out);
-      if (!parsed) return sendJSON(res, 502, { error: "模型未返回有效分数，请重试" });
-      const clamp = v => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
-      const scores = {
-        skill: clamp(parsed.skill), business: clamp(parsed.business), core: clamp(parsed.core),
-        trait: clamp(parsed.trait), interest: clamp(parsed.interest),
-      };
-      return sendJSON(res, 200, { scores });
-    } catch (e) {
-      console.error("调用 DeepSeek 异常:", e);
-      return sendJSON(res, 502, { error: "无法连接 DeepSeek：" + e.message });
-    }
-  });
-}
-
 // 读取岗位数据（文件不存在时返回空数组）
 function readJobs(res) {
   fs.readFile(DATA_FILE, "utf8", (err, txt) => {
@@ -272,7 +211,6 @@ const server = http.createServer((req, res) => {
   if (req.method === "PUT" && req.url === "/api/jobs") return writeJobs(req, res);
   if (req.method === "POST" && req.url === "/api/ocr") return handleOCR(req, res);
   if (req.method === "POST" && req.url === "/api/structure") return handleStructure(req, res);
-  if (req.method === "POST" && req.url === "/api/score") return handleScore(req, res);
   if (req.method === "GET") return serveStatic(req, res);
   res.writeHead(405); res.end("Method Not Allowed");
 });

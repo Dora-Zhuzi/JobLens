@@ -34,14 +34,49 @@
     { key: "idealTrait", label: "理想性格特质", def: "特质1，特质2" },
   ];
 
-  // 个人匹配度分析的 5 个固定维度（各占 20% 权重）
+  // 个人匹配度分析的 4 个维度（勾选项由岗位要求对应维度派生，reqKey 指向 REQ_DIMS）
   const MATCH_DIMS = [
-    { key: "skill",    label: "技能",     def: "技能1熟练，技能2了解，技能3无" },
-    { key: "business", label: "业务经验", def: "业务经验1丰富，业务经验2无" },
-    { key: "core",     label: "核心能力", def: "能力1强，能力2弱" },
-    { key: "trait",    label: "性格特质", def: "特质1匹配，特质2不匹配" },
-    { key: "interest", label: "兴趣度",   def: "高" },
+    { key: "skill",    label: "技能",     reqKey: "skill" },
+    { key: "business", label: "业务经验", reqKey: "business" },
+    { key: "core",     label: "核心能力", reqKey: "core" },
+    { key: "trait",    label: "性格特质", reqKey: "idealTrait" },
   ];
+  const matchDimByReqKey = {};
+  MATCH_DIMS.forEach(d => { matchDimByReqKey[d.reqKey] = d; });
+
+  // 逗号拆分枚举项（去空格、去空、去重，保序）
+  function splitItems(raw) {
+    const seen = new Set(), out = [];
+    String(raw || "").split(/[，,]/).forEach(s => {
+      const t = s.trim();
+      if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+    });
+    return out;
+  }
+
+  // 把某维度的岗位要求文本同步成匹配度勾选项（保留仍存在项的已勾状态）
+  function syncMatchDim(job, dim) {
+    if (!job.match) job.match = {};
+    const prev = Array.isArray(job.match[dim.key]) ? job.match[dim.key] : [];
+    const prevChecked = {};
+    prev.forEach(o => { prevChecked[o.text] = o.checked; });
+    const reqText = (job.requirements && job.requirements[dim.reqKey]) || "";
+    job.match[dim.key] = splitItems(reqText).map(text => ({ text, checked: !!prevChecked[text] }));
+  }
+  function syncAllMatchDims(job) { MATCH_DIMS.forEach(d => syncMatchDim(job, d)); }
+
+  // 按勾选实时算分：每维=勾选数/项数，总分=非空维度等权平均
+  function recomputeScore(job) {
+    const per = {}; let sum = 0, cnt = 0;
+    MATCH_DIMS.forEach(d => {
+      const list = (job.match && job.match[d.key]) || [];
+      if (!list.length) { per[d.key] = null; return; }
+      const pct = Math.round(list.filter(o => o.checked).length / list.length * 100);
+      per[d.key] = pct; sum += pct; cnt++;
+    });
+    per.total = cnt ? Math.round(sum / cnt) : null;
+    job.score = per;
+  }
 
   /* ---------- 状态 ---------- */
   let jobs = loadLocal();   // 先用浏览器缓存即时渲染，启动后再对接后端文件
@@ -81,7 +116,7 @@
     SECTIONS.forEach(s => {
       if (s.type === "match") {
         job.match = {};
-        MATCH_DIMS.forEach(d => { job.match[d.key] = ""; });   // 空值，示例作占位提示
+        MATCH_DIMS.forEach(d => { job.match[d.key] = []; });   // 勾选项数组，初始为空
       } else if (s.type === "req") {
         job.requirements = {};
         REQ_DIMS.forEach(d => { job.requirements[d.key] = ""; });
@@ -89,30 +124,31 @@
         job[s.key] = s.def;
       }
     });
-    job.score = null;       // { skill,business,core,trait,interest,total }
-    job.scoreHash = "";     // 打分时所用匹配度文本的快照，用于过期检测
+    job.score = null;       // { skill,business,core,trait,total }
     return Object.assign(job, partial);
   }
 
-  // 兼容旧数据：把旧的 match 文本块/prepTime 文本迁移成新结构
+  // 兼容旧数据：迁移成新结构（match 改为派生勾选项、去掉兴趣度等）
   function migrateJob(job) {
     if (!job || typeof job !== "object") return job;
-    // match → 对象
-    if (typeof job.match !== "object" || job.match === null) {
-      const parsed = parseMatchBlob(typeof job.match === "string" ? job.match : "");
-      job.match = parsed;
-    }
-    MATCH_DIMS.forEach(d => { if (job.match[d.key] === undefined) job.match[d.key] = ""; });
     // requirements → 对象
     if (typeof job.requirements !== "object" || job.requirements === null) {
       job.requirements = parseDimBlob(typeof job.requirements === "string" ? job.requirements : "", REQ_DIMS);
     }
     REQ_DIMS.forEach(d => { if (job.requirements[d.key] === undefined) job.requirements[d.key] = ""; });
+    // match → {dim: [{text,checked}]}；旧的自评文字丢弃，改从岗位要求派生（全不勾）
+    const looksNew = job.match && MATCH_DIMS.every(d => Array.isArray(job.match[d.key]));
+    if (!looksNew) {
+      job.match = {};
+      MATCH_DIMS.forEach(d => { job.match[d.key] = []; });
+      syncAllMatchDims(job);
+    }
+    if (job.match) delete job.match.interest;
     // prepTime 文本 → prepDays 数字
     if (job.prepDays === undefined) job.prepDays = parsePrepDays(job.prepTime);
     delete job.prepTime;
-    if (job.score === undefined) job.score = null;
-    if (job.scoreHash === undefined) job.scoreHash = "";
+    delete job.scoreHash;
+    recomputeScore(job);
     return job;
   }
 
@@ -130,8 +166,6 @@
     });
     return out;
   }
-  const parseMatchBlob = text => parseDimBlob(text, MATCH_DIMS);
-
   function parsePrepDays(t) {
     if (t == null || t === "") return null;
     if (typeof t === "number") return t;
@@ -142,19 +176,10 @@
     return d ? Math.round(parseFloat(d[1])) : null;
   }
 
-  // 匹配度文本快照（用于判断是否需要重新打分）
-  function matchHash(match) {
-    const s = MATCH_DIMS.map(d => (match[d.key] || "").trim()).join("|");
-    let h = 5381;
-    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-    return String(h);
-  }
-
   /* ---------- DOM ---------- */
   const $ = sel => document.querySelector(sel);
   const jobListEl   = $("#jobList");
   const jobCountEl  = $("#jobCount");
-  const listHintEl  = $("#listEmptyHint");
   const editorEl    = $("#editor");
   const editorEmpty = $("#editorEmpty");
   const saveBtn     = $("#saveBtn");
@@ -167,7 +192,6 @@
   const analysisBody  = $("#analysisBody");
   const analysisEmpty = $("#analysisEmpty");
   const pageSizeSelect = $("#pageSizeSelect");
-  const batchScoreBtn = $("#batchScoreBtn");
   const analyzeBtn    = $("#analyzeBtn");
   const pagerPrev     = $("#pagerPrev");
   const pagerNext     = $("#pagerNext");
@@ -180,7 +204,6 @@
   function renderList() {
     jobListEl.innerHTML = "";
     jobCountEl.textContent = jobs.length;
-    listHintEl.hidden = jobs.length > 0;
     // 按创建时间倒序展示（最新在最上），不改动底层数组
     const ordered = [...jobs].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     ordered.forEach(job => {
@@ -278,44 +301,74 @@
     inp.addEventListener("blur", () => { inp.placeholder = placeholder || ""; });
   }
 
-  // 个人匹配度分析板块：5 维输入 + 评估按钮 + 分数展示
+  // 个人匹配度分析板块：4 维勾选项（由岗位要求派生）+ 实时分数
   function buildMatchSection(s, job) {
     const wrap = document.createElement("div");
     wrap.className = "section";
+    wrap.id = "matchSection";
+    renderMatchInto(wrap, job, s.label);
+    return wrap;
+  }
+
+  function renderMatchInto(wrap, job, label) {
+    wrap.innerHTML = "";
     const title = document.createElement("div");
-    title.className = "section-title with-action";
-    const span = document.createElement("span");
-    span.textContent = s.label + "（5 维各占 20%）";
-    title.appendChild(span);
-    const btn = document.createElement("button");
-    btn.className = "btn ghost mini struct-btn";
-    btn.textContent = "🎯 评估匹配度";
-    if (!structReady) { btn.disabled = true; btn.title = "需在 config.json 配置 DeepSeek key 并启动后端"; }
-    title.appendChild(btn);
+    title.className = "section-title";
+    title.textContent = (label || "个人匹配度分析") + "（勾选你满足的条件，实时计算匹配度）";
     wrap.appendChild(title);
 
     MATCH_DIMS.forEach(d => {
-      const row = document.createElement("div");
-      row.className = "match-row";
-      const lab = document.createElement("label");
-      lab.textContent = d.label;
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.value = (job.match && job.match[d.key]) || "";
-      inp.dataset.matchDim = d.key;
-      setupEnumInput(inp, d.def);
-      row.appendChild(lab);
-      row.appendChild(inp);
-      wrap.appendChild(row);
+      const block = document.createElement("div");
+      block.className = "match-dim";
+      const head = document.createElement("div");
+      head.className = "match-dim-head";
+      head.textContent = d.label;
+      block.appendChild(head);
+
+      const list = (job.match && job.match[d.key]) || [];
+      if (!list.length) {
+        const empty = document.createElement("div");
+        empty.className = "match-empty";
+        empty.textContent = "（岗位要求该维为空）";
+        block.appendChild(empty);
+      } else {
+        const opts = document.createElement("div");
+        opts.className = "match-opts";
+        list.forEach(o => {
+          const lab = document.createElement("label");
+          lab.className = "match-opt" + (o.checked ? " checked" : "");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!o.checked;
+          cb.onchange = () => {
+            o.checked = cb.checked;
+            lab.classList.toggle("checked", cb.checked);
+            recomputeScore(job);
+            persist();
+            renderScoreBox(wrap.querySelector(".score-box"), job);
+          };
+          const span = document.createElement("span");
+          span.textContent = o.text;
+          lab.appendChild(cb);
+          lab.appendChild(span);
+          opts.appendChild(lab);
+        });
+        block.appendChild(opts);
+      }
+      wrap.appendChild(block);
     });
 
     const scoreBox = document.createElement("div");
     scoreBox.className = "score-box";
     wrap.appendChild(scoreBox);
     renderScoreBox(scoreBox, job);
+  }
 
-    btn.onclick = () => scoreCurrentJob(btn, scoreBox);
-    return wrap;
+  // 重渲染匹配度板块（岗位要求改动同步后调用，不影响上方输入框焦点）
+  function refreshMatchSection() {
+    const el = document.getElementById("matchSection");
+    const job = jobs.find(j => j.id === currentId);
+    if (el && job) renderMatchInto(el, job);
   }
 
   // 岗位要求拆解板块：4 维结构化输入 + 自动拆解
@@ -344,6 +397,16 @@
       inp.value = (job.requirements && job.requirements[d.key]) || "";
       inp.dataset.reqDim = d.key;
       setupEnumInput(inp, d.def);
+      // 失焦时把该维同步成匹配度勾选项（保留已勾状态）
+      inp.addEventListener("blur", () => {
+        collectFields();
+        const cur = jobs.find(j => j.id === currentId);
+        if (!cur) return;
+        syncMatchDim(cur, matchDimByReqKey[d.key]);
+        recomputeScore(cur);
+        persist();
+        refreshMatchSection();
+      });
       row.appendChild(lab);
       row.appendChild(inp);
       wrap.appendChild(row);
@@ -367,8 +430,10 @@
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || "自动拆解失败");
         cur.requirements = parseDimBlob(data.text || "", REQ_DIMS);
+        syncAllMatchDims(cur);   // 自动拆解后全量同步到匹配度勾选项
+        recomputeScore(cur);
         persist();
-        renderEditor();   // 重新渲染以回填 4 个字段
+        renderEditor();          // 重新渲染：回填岗位要求 + 生成匹配度勾选项
         toast("已自动拆解");
       } catch (e) {
         toast("自动拆解失败：" + e.message);
@@ -407,8 +472,6 @@
     const job = jobs.find(j => j.id === currentId);
     if (!job) return;
     editorEl.querySelectorAll("[data-key]").forEach(f => { job[f.dataset.key] = f.value; });
-    if (!job.match) job.match = {};
-    editorEl.querySelectorAll("[data-match-dim]").forEach(f => { job.match[f.dataset.matchDim] = f.value; });
     if (!job.requirements || typeof job.requirements !== "object") job.requirements = {};
     editorEl.querySelectorAll("[data-req-dim]").forEach(f => { job.requirements[f.dataset.reqDim] = f.value; });
     const daysEl = editorEl.querySelector("[data-days]");
@@ -538,62 +601,28 @@
     btn.hidden = false;
   }
 
-  /* ---------- 匹配度打分 ---------- */
-  // 调后端打分，返回 {skill,business,core,trait,interest,total}
-  async function fetchScore(match) {
-    const r = await fetch("/api/score", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dims: match || {} }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || "打分失败");
-    const sc = data.scores || {};
-    const total = Math.round(MATCH_DIMS.reduce((sum, d) => sum + (sc[d.key] || 0), 0) / MATCH_DIMS.length);
-    return { ...sc, total };
-  }
-
-  function isStale(job) {
-    return !!(job.score && job.scoreHash && job.scoreHash !== matchHash(job.match || {}));
-  }
-
+  /* ---------- 匹配度展示（分数由勾选实时算出） ---------- */
   function renderScoreBox(box, job) {
+    if (!box) return;
     box.innerHTML = "";
-    if (!job.score) { box.innerHTML = '<span class="score-empty">尚未评估匹配度</span>'; return; }
+    const s = job.score;
+    if (!s || s.total == null) {
+      box.innerHTML = '<span class="score-empty">暂无可勾选项（先在岗位要求拆解中填写内容）</span>';
+      return;
+    }
     const head = document.createElement("div");
     head.className = "score-head";
-    head.innerHTML = `<span class="score-total">匹配度 ${job.score.total}%</span>` +
-      (isStale(job) ? '<span class="score-stale">内容已修改，分数可能过期</span>' : "");
+    head.innerHTML = `<span class="score-total">匹配度 ${s.total}%</span>`;
     box.appendChild(head);
     const chips = document.createElement("div");
     chips.className = "score-chips";
     MATCH_DIMS.forEach(d => {
       const c = document.createElement("span");
       c.className = "score-chip";
-      c.textContent = `${d.label} ${job.score[d.key] != null ? job.score[d.key] : "—"}`;
+      c.textContent = `${d.label} ${s[d.key] != null ? s[d.key] + "%" : "—"}`;
       chips.appendChild(c);
     });
     box.appendChild(chips);
-  }
-
-  async function scoreCurrentJob(btn, scoreBox) {
-    collectFields();
-    const job = jobs.find(j => j.id === currentId);
-    if (!job) return;
-    const label = btn.textContent;
-    btn.disabled = true; btn.textContent = "评估中…";
-    try {
-      const score = await fetchScore(job.match);
-      job.score = score;
-      job.scoreHash = matchHash(job.match || {});
-      persist();
-      renderScoreBox(scoreBox, job);
-      toast(`匹配度 ${score.total}%`);
-    } catch (e) {
-      toast("评估失败：" + e.message);
-    } finally {
-      btn.disabled = false; btn.textContent = label;
-    }
   }
 
   /* ---------- 岗位列表 / 分析视图 ---------- */
@@ -611,7 +640,6 @@
     { label: "业务经验",  key: "business", get: j => (j.score ? j.score.business : null) },
     { label: "核心能力",  key: "core",     get: j => (j.score ? j.score.core : null) },
     { label: "性格特质",  key: "trait",    get: j => (j.score ? j.score.trait : null) },
-    { label: "兴趣度",    key: "interest", get: j => (j.score ? j.score.interest : null) },
     { label: "准备(天)",  key: "days",     get: j => (j.prepDays == null ? null : j.prepDays) },
     { label: "创建时间",  key: "created",  get: j => (j.createdAt || 0) },
   ];
@@ -705,16 +733,14 @@
     analysisBody.innerHTML = "";
     slice.forEach((job, i) => {
       const tr = document.createElement("tr");
-      const dim = k => (job.score && job.score[k] != null ? job.score[k] : "—");
-      const totalCell = job.score
-        ? `<span class="t-score">${job.score.total}%</span>` + (isStale(job) ? '<span class="stale-dot" title="内容已改，分数可能过期">·过期</span>' : "")
-        : "—";
+      const dim = k => (job.score && job.score[k] != null ? job.score[k] + "%" : "—");
+      const totalCell = (job.score && job.score.total != null) ? `<span class="t-score">${job.score.total}%</span>` : "—";
       tr.innerHTML =
         `<td class="td-sel"><input type="checkbox"></td>` +
         `<td>${start + i + 1}</td>` +
         `<td class="col-name" title="点击编辑"></td>` +
         `<td>${totalCell}</td>` +
-        `<td>${dim("skill")}</td><td>${dim("business")}</td><td>${dim("core")}</td><td>${dim("trait")}</td><td>${dim("interest")}</td>` +
+        `<td>${dim("skill")}</td><td>${dim("business")}</td><td>${dim("core")}</td><td>${dim("trait")}</td>` +
         `<td>${job.prepDays == null ? "—" : job.prepDays}</td>` +
         `<td>${fmtDate(job.createdAt)}</td>`;
       const cb = tr.querySelector(".td-sel input");
@@ -745,10 +771,6 @@
   }
 
   /* ---------- 岗位要求统计 ---------- */
-  function splitItems(raw) {
-    return String(raw || "").split(/[，,]/).map(s => s.trim()).filter(Boolean);
-  }
-
   function computeReqStats(selJobs) {
     const total = selJobs.length;
     const result = {};
@@ -809,28 +831,6 @@
       statsGrid.appendChild(card);
     });
     openModal(statsModal);
-  }
-
-  async function batchScore() {
-    if (!structReady) { toast("未配置 DeepSeek key，无法打分"); return; }
-    const targets = jobs.filter(j => !j.score || isStale(j));
-    if (!targets.length) { toast("没有需要打分的岗位"); return; }
-    batchScoreBtn.disabled = true;
-    let done = 0;
-    for (const job of targets) {
-      batchScoreBtn.textContent = `打分中 ${done + 1}/${targets.length}…`;
-      try {
-        const score = await fetchScore(job.match);
-        job.score = score;
-        job.scoreHash = matchHash(job.match || {});
-      } catch (e) { console.warn("打分失败：", job.name, e); }
-      done++;
-      renderAnalysis();
-    }
-    persist();
-    batchScoreBtn.disabled = false;
-    batchScoreBtn.textContent = "为未评分/已过期岗位打分";
-    toast(`已完成 ${done} 个岗位打分`);
   }
 
   function fmtDate(ts) {
@@ -1360,7 +1360,6 @@
   pageSizeSelect.onchange = () => { pageSize = +pageSizeSelect.value; page = 1; renderAnalysis(); };
   pagerPrev.onclick = () => { if (page > 1) { page--; renderAnalysis(); } };
   pagerNext.onclick = () => { page++; renderAnalysis(); };
-  batchScoreBtn.onclick = batchScore;
   analyzeBtn.onclick = openStats;
 
   /* ---------- 启动 ---------- */
